@@ -7,12 +7,30 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import yaml
+
 MEMORY_DIR = Path("memory")
-SHORT_TERM_PATH = MEMORY_DIR / "short_term_context.md"
+SHORT_TERM_PATH = Path("measurement") / "short_term_context.md"
 TEMP_CACHE_PATH = MEMORY_DIR / "temp_experience_cache.md"
 LONG_TERM_PATH = MEMORY_DIR / "long_term_skills.md"
+WIRING_MAP_PATH = MEMORY_DIR / "wiring_map.yaml"
 
-SHORT_TERM_TEMPLATE = """# 短期上下文\n\n## 任务队列\n- [ ] 初始化任务队列\n\n## 参数黑板\n- last_update: N/A\n\n## 文件指针\n- latest_db: N/A\n- latest_plot: N/A\n"""
+SHORT_TERM_TEMPLATE = """# 短期参数记忆
+
+## 说明
+- 本文件仅保存本轮测量参数，不保存硬件通道映射。
+- 硬件通道统一从 memory/wiring_map.yaml 读取。
+
+## 参数存档(JSON)
+```json
+{
+    "last_update": null,
+    "records": {}
+}
+```
+"""
+
+JSON_SECTION_TITLE = "参数存档(JSON)"
 
 
 def _print_json(payload: Dict[str, Any]) -> None:
@@ -21,6 +39,7 @@ def _print_json(payload: Dict[str, Any]) -> None:
 
 def _ensure_memory_files() -> None:
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    SHORT_TERM_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     if not SHORT_TERM_PATH.exists():
         SHORT_TERM_PATH.write_text(SHORT_TERM_TEMPLATE, encoding="utf-8")
@@ -36,6 +55,75 @@ def _load_markdown(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def _default_short_term_store() -> Dict[str, Any]:
+    return {
+        "last_update": None,
+        "records": {},
+    }
+
+
+def _extract_short_term_store(md: str) -> Dict[str, Any]:
+    pattern = re.compile(
+        rf"##\s+{re.escape(JSON_SECTION_TITLE)}\s*```json\s*(.*?)\s*```",
+        re.DOTALL,
+    )
+    match = pattern.search(md)
+    if not match:
+        return _default_short_term_store()
+
+    try:
+        data = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return _default_short_term_store()
+
+    if not isinstance(data, dict):
+        return _default_short_term_store()
+
+    records = data.get("records", {})
+    if not isinstance(records, dict):
+        records = {}
+
+    return {
+        "last_update": data.get("last_update"),
+        "records": records,
+    }
+
+
+def _write_short_term_store(store: Dict[str, Any]) -> None:
+    payload = {
+        "last_update": store.get("last_update"),
+        "records": store.get("records", {}),
+    }
+    content = (
+        "# 短期参数记忆\n\n"
+        "## 说明\n"
+        "- 本文件仅保存本轮测量参数，不保存硬件通道映射。\n"
+        "- 硬件通道统一从 memory/wiring_map.yaml 读取。\n\n"
+        "## 参数存档(JSON)\n"
+        "```json\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
+        "```\n"
+    )
+    SHORT_TERM_PATH.write_text(content, encoding="utf-8")
+
+
+def _load_short_term_store() -> Dict[str, Any]:
+    md = _load_markdown(SHORT_TERM_PATH)
+    if not md.strip():
+        return _default_short_term_store()
+    return _extract_short_term_store(md)
+
+
+def _deep_merge_dict(base: Dict[str, Any], new_value: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    for key, value in new_value.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge_dict(out[key], value)
+        else:
+            out[key] = value
+    return out
 
 
 def _ensure_section(md: str, section_title: str) -> str:
@@ -94,55 +182,173 @@ def _parse_task_status(raw: str) -> Dict[str, bool]:
     raise ValueError("--task_status 仅支持 JSON 对象 / JSON 数组 / 纯文本任务名")
 
 
-def _parse_existing_task_lines(body: str) -> Dict[str, bool]:
-    tasks: Dict[str, bool] = {}
-    for line in body.splitlines():
-        m = re.match(r"^-\s*\[( |x|X)\]\s*(.+)$", line.strip())
-        if m:
-            tasks[m.group(2).strip()] = m.group(1).lower() == "x"
-    return tasks
+def _parse_nested_payload(raw: str) -> Dict[str, Any]:
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("参数必须是 JSON 对象")
+    return data
 
 
-def _parse_existing_param_lines(body: str) -> Dict[str, str]:
-    params: Dict[str, str] = {}
-    for line in body.splitlines():
-        m = re.match(r"^-\s*([^:]+):\s*(.+)$", line.strip())
-        if m:
-            params[m.group(1).strip()] = m.group(2).strip()
-    return params
+def _load_wiring_map() -> Dict[str, Any]:
+    if not WIRING_MAP_PATH.exists():
+        return {}
+    with WIRING_MAP_PATH.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _select_wiring_for_qubits(wiring: Dict[str, Any], qubits: List[str]) -> Dict[str, Any]:
+    qset = set(qubits)
+    drive = wiring.get("drive_channels", [])
+    readout = wiring.get("readout_channels", [])
+
+    selected_drive = []
+    if isinstance(drive, list):
+        for item in drive:
+            if not isinstance(item, dict):
+                continue
+            item_qubits = item.get("qubits", [])
+            if isinstance(item_qubits, list) and qset.intersection(str(q) for q in item_qubits):
+                selected_drive.append(item)
+
+    selected_readout = []
+    if isinstance(readout, list):
+        for item in readout:
+            if not isinstance(item, dict):
+                continue
+            serves = item.get("serves_qubits", [])
+            if isinstance(serves, list) and qset.intersection(str(q) for q in serves):
+                selected_readout.append(item)
+
+    return {
+        "drive_channels": selected_drive,
+        "readout_channels": selected_readout,
+    }
+
+
+def _select_records(records: Dict[str, Any], requirements: Dict[str, Any]) -> Dict[str, Any]:
+    if not requirements:
+        return records
+
+    output: Dict[str, Any] = {}
+    for qubit, wanted in requirements.items():
+        q_key = str(qubit)
+        q_data = records.get(q_key)
+        if not isinstance(q_data, dict):
+            continue
+
+        if wanted in ("*", None):
+            output[q_key] = q_data
+            continue
+
+        if isinstance(wanted, str):
+            wanted = [wanted]
+
+        if not isinstance(wanted, list):
+            continue
+
+        selected: Dict[str, Any] = {}
+        for key in wanted:
+            if not isinstance(key, str):
+                continue
+            if key in q_data:
+                selected[key] = q_data[key]
+        if selected:
+            output[q_key] = selected
+
+    return output
+
+
+def cmd_reset_short_term() -> Dict[str, Any]:
+    _write_short_term_store(_default_short_term_store())
+    return {
+        "ok": True,
+        "action": "reset_short_term",
+        "file": str(SHORT_TERM_PATH),
+    }
+
+
+def cmd_save_short_term(params_raw: str) -> Dict[str, Any]:
+    payload = _parse_nested_payload(params_raw)
+    store = _load_short_term_store()
+    records = store.get("records", {})
+    if not isinstance(records, dict):
+        records = {}
+
+    records = _deep_merge_dict(records, payload)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    store["records"] = records
+    store["last_update"] = ts
+    _write_short_term_store(store)
+
+    return {
+        "ok": True,
+        "action": "save_short_term",
+        "file": str(SHORT_TERM_PATH),
+        "saved_qubits": list(payload.keys()),
+        "last_update": ts,
+    }
+
+
+def cmd_get_short_term(requirements_raw: str | None) -> Dict[str, Any]:
+    store = _load_short_term_store()
+    records = store.get("records", {}) if isinstance(store.get("records"), dict) else {}
+    requirements: Dict[str, Any] = {}
+
+    if requirements_raw:
+        requirements = _parse_nested_payload(requirements_raw)
+
+    selected = _select_records(records, requirements)
+    return {
+        "ok": True,
+        "action": "get_short_term",
+        "file": str(SHORT_TERM_PATH),
+        "last_update": store.get("last_update"),
+        "records": selected,
+    }
+
+
+def cmd_prepare_experiment_inputs(requirements_raw: str) -> Dict[str, Any]:
+    requirements = _parse_nested_payload(requirements_raw)
+    short_term = cmd_get_short_term(json.dumps(requirements, ensure_ascii=False))
+    qubits = list(short_term.get("records", {}).keys())
+
+    wiring = _load_wiring_map()
+    wiring_selection = _select_wiring_for_qubits(wiring, qubits)
+
+    return {
+        "ok": True,
+        "action": "prepare_experiment_inputs",
+        "params_file": str(SHORT_TERM_PATH),
+        "wiring_file": str(WIRING_MAP_PATH),
+        "last_update": short_term.get("last_update"),
+        "params": short_term.get("records", {}),
+        "wiring": wiring_selection,
+    }
 
 
 def cmd_update_short_term(params_dict_raw: str, task_status_raw: str) -> Dict[str, Any]:
+    # Backward-compatible wrapper: map old flat update API into new JSON store.
     params_dict = _parse_params_dict(params_dict_raw)
     task_updates = _parse_task_status(task_status_raw)
+    store = _load_short_term_store()
+    records = store.get("records", {})
+    if not isinstance(records, dict):
+        records = {}
 
-    md = _load_markdown(SHORT_TERM_PATH)
-    for section in ("任务队列", "参数黑板", "文件指针"):
-        md = _ensure_section(md, section)
+    legacy = records.get("LEGACY", {})
+    if not isinstance(legacy, dict):
+        legacy = {}
+    legacy["params"] = {str(k): v for k, v in params_dict.items()}
+    legacy["tasks"] = {str(k): bool(v) for k, v in task_updates.items()}
+    records["LEGACY"] = legacy
 
-    task_pat = re.compile(r"(^##\s+任务队列\s*$)(.*?)(?=^##\s+|\Z)", re.MULTILINE | re.DOTALL)
-    param_pat = re.compile(r"(^##\s+参数黑板\s*$)(.*?)(?=^##\s+|\Z)", re.MULTILINE | re.DOTALL)
-
-    task_match = task_pat.search(md)
-    param_match = param_pat.search(md)
-    if task_match is None or param_match is None:
-        raise RuntimeError("短期上下文模板异常，缺少必要区块")
-
-    existing_tasks = _parse_existing_task_lines(task_match.group(2))
-    existing_tasks.update(task_updates)
-
-    existing_params = _parse_existing_param_lines(param_match.group(2))
-    for k, v in params_dict.items():
-        existing_params[str(k)] = str(v)
-    existing_params["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    task_body_lines = [f"- [{'x' if done else ' '}] {task}" for task, done in existing_tasks.items()]
-    param_body_lines = [f"- {k}: {v}" for k, v in existing_params.items()]
-
-    md = _replace_section_body(md, "任务队列", "\n".join(task_body_lines))
-    md = _replace_section_body(md, "参数黑板", "\n".join(param_body_lines))
-
-    SHORT_TERM_PATH.write_text(md, encoding="utf-8")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    store["records"] = records
+    store["last_update"] = ts
+    _write_short_term_store(store)
 
     return {
         "ok": True,
@@ -150,6 +356,7 @@ def cmd_update_short_term(params_dict_raw: str, task_status_raw: str) -> Dict[st
         "file": str(SHORT_TERM_PATH),
         "updated_params": list(params_dict.keys()),
         "updated_tasks": list(task_updates.keys()),
+        "last_update": ts,
     }
 
 
@@ -230,6 +437,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AI Agent memory manager CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    subparsers.add_parser("reset_short_term", help="重置短期参数记忆为初始空白模板")
+
+    p_save = subparsers.add_parser("save_short_term", help="保存/更新短期参数(JSON深度合并)")
+    p_save.add_argument("--params_json", required=True, help="JSON object, e.g. {'Q1': {'cavity_freq_hz': {...}}}")
+
+    p_get = subparsers.add_parser("get_short_term", help="读取短期参数，可按需求筛选")
+    p_get.add_argument("--requirements_json", required=False, help="JSON object, e.g. {'Q1':['cavity_freq_hz'],'Q2':['pi_pulse']}")
+
+    p_prepare = subparsers.add_parser("prepare_experiment_inputs", help="按需求提取短期参数并拼接接线图通道信息")
+    p_prepare.add_argument("--requirements_json", required=True, help="JSON object, e.g. {'Q1':['cavity_freq_hz'],'Q2':['pi_pulse']}")
+
     p_update = subparsers.add_parser("update_short_term", help="更新短期上下文参数黑板和任务队列")
     p_update.add_argument("--params_dict", required=True, help="JSON string of parameter dict")
     p_update.add_argument("--task_status", required=True, help="Task status JSON/text")
@@ -244,7 +462,15 @@ def main() -> None:
     try:
         _ensure_memory_files()
 
-        if args.command == "update_short_term":
+        if args.command == "reset_short_term":
+            result = cmd_reset_short_term()
+        elif args.command == "save_short_term":
+            result = cmd_save_short_term(args.params_json)
+        elif args.command == "get_short_term":
+            result = cmd_get_short_term(args.requirements_json)
+        elif args.command == "prepare_experiment_inputs":
+            result = cmd_prepare_experiment_inputs(args.requirements_json)
+        elif args.command == "update_short_term":
             result = cmd_update_short_term(args.params_dict, args.task_status)
         elif args.command == "cache_experience":
             result = cmd_cache_experience(args.experience_text)

@@ -6,7 +6,7 @@
 1. 接收到包含多个测量步骤的新任务时（初始化队列）。
 2. 任何一个子实验（如 Rabi 扫频）完成，并得到拟合参数后。
 ## 执行逻辑
-你需要静默（I 级权限）通过 `agent_manager.py update_short_term` 更新 `memory/short_term_context.md` 文件。该文件充当你的“草稿本”和“状态机”。
+你需要静默（I 级权限）通过 `agent_manager.py save_short_term` / `get_short_term` 更新与读取 `measurement/short_term_context.md` 文件。该文件用于保存本轮测量参数，不保存硬件通道信息。
 ## 更新规则
 1. **任务队列 (Task Queue)**：使用 Markdown 的 Checkbox 语法 (`- [ ]`, `- [x]`) 动态维护当前批次实验的进度。不要删除已完成的任务，而是打上勾。
 2. **参数黑板 (Parameter Blackboard)**：
@@ -27,4 +27,4 @@
 - 每次实验开始前，你必须先读取此文件，将“参数黑板”中的数值作为下一步实验的默认设置，绝对禁止从文献中瞎猜物理量。
 - 每次实验开始前，若未找到最近一次预检 JSON 或确认结果不是 `Y`，禁止进入测量执行步骤。
 - 若最近一次执行器状态为失败，必须先修复脚本或参数再重试，禁止直接跳过失败记录继续测量。
-- 严禁绕过 `agent_manager.py` 直接编辑 `memory/short_term_context.md`、`memory/temp_experience_cache.md`、`memory/long_term_skills.md`。
+- 严禁绕过 `agent_manager.py` 直接编辑 `measurement/short_term_context.md`、`memory/temp_experience_cache.md`、`memory/long_term_skills.md`。
