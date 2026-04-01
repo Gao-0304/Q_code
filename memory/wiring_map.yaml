@@ -1,0 +1,121 @@
+schema_version: 1
+updated_at: ""
+owner: ""
+notes: "手动填写。该文件用于把自然语言(Q1/Q2/CZ/读出)映射到实际硬件通道。"
+
+language_resolution_rules:
+  default_transition_if_unspecified: "0-1"
+  two_qubit_drive_treated_as_drive: true
+  shared_readout_allowed: true
+  parse_priority:
+    - "显式写明跃迁(如 Q1 1-2激发)"
+    - "显式写明两比特操作(如 CZ)"
+    - "仅写 Q1/Q2 时默认 0-1激发"
+
+qubit_aliases:
+  Q1:
+    aliases: ["Q1", "q1", "qubit1", "比特1"]
+  Q2:
+    aliases: ["Q2", "q2", "qubit2", "比特2"]
+
+drive_channels:
+  - logical_name: "Q1 0-1激发"
+    drive_type: "single_qubit"
+    qubits: ["Q1"]
+    transition: "0-1"
+    language_aliases: ["Q1", "Q1 0-1激发"]
+    instrument:
+      instrument_name: "nswave"
+      instrument_port: "2"
+      local_oscillator: ""
+      iq_mixer: ""
+    fridge_line:
+      line_name: ""
+      attenuation_dB: ""
+      filter_type: ""
+    pulse_defaults:
+      center_freq_hz: ""
+      power_dBm: ""
+
+  - logical_name: "Q1 1-2激发"
+    drive_type: "single_qubit"
+    qubits: ["Q1"]
+    transition: "1-2"
+    language_aliases: ["Q1 1-2激发"]
+    instrument:
+      instrument_name: ""
+      instrument_port: ""
+      local_oscillator: ""
+      iq_mixer: ""
+    fridge_line:
+      line_name: ""
+      attenuation_dB: ""
+      filter_type: ""
+    pulse_defaults:
+      center_freq_hz: ""
+      power_dBm: ""
+
+  - logical_name: "Q2 0-1激发"
+    drive_type: "single_qubit"
+    qubits: ["Q2"]
+    transition: "0-1"
+    language_aliases: ["Q2", "Q2 0-1激发"]
+    instrument:
+      instrument_name: "nswave"
+      instrument_port: "2"
+      local_oscillator: ""
+      iq_mixer: ""
+    fridge_line:
+      line_name: ""
+      attenuation_dB: ""
+      filter_type: ""
+    pulse_defaults:
+      center_freq_hz: ""
+      power_dBm: ""
+
+  - logical_name: "CZ Q1-Q2"
+    drive_type: "two_qubit_operation"
+    qubits: ["Q1", "Q2"]
+    operation: "CZ"
+    transition: ""
+    language_aliases: ["CZ", "Q1Q2 CZ", "Q1-Q2 CZ"]
+    instrument:
+      instrument_name: ""
+      instrument_port: ""
+      local_oscillator: ""
+      iq_mixer: ""
+    fridge_line:
+      line_name: ""
+      attenuation_dB: ""
+      filter_type: ""
+    pulse_defaults:
+      center_freq_hz: ""
+      power_dBm: ""
+
+readout_channels:
+  - logical_name: "RO_A"
+    serves_qubits: ["Q1", "Q2"]
+    language_aliases: ["Q1读出", "Q2读出", "Q1Q2联合读出"]
+    output_drive_channel:
+      instrument_name: "nswave"
+      instrument_port: "2"
+      fridge_line: ""
+      attenuation_dB: ""
+      filter_type: ""
+    acquisition_channel:
+      instrument_name: "nswave"
+      instrument_port: "2"
+      fridge_line: ""
+      attenuation_dB: ""
+      filter_type: ""
+    per_qubit_readout_freq_hz:
+      Q1: ""
+      Q2: ""
+    readout_defaults:
+      sample_length_s: ""
+      shots: ""
+      period_s: ""
+
+# 若未来涉及 DC 偏置，请至少保证存在可解析的 max_safe_voltage。
+safety:
+  max_safe_voltage: ""

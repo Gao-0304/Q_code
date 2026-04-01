@@ -10,6 +10,7 @@
    - **对于 DC 线路**：必须自动强制加入 `max_safe_voltage` 预留字段。
 4. **挂起确认**：生成文件后，在终端打印：“【接线需求已生成】请前往 `memory/wiring_map.yaml` 填写具体的物理接线与衰减参数。填写完成后请回复‘已填完’。”
 5. **读取并校验**：用户回复后，读取该 YAML 文件。如果发现衰减值未填或 DC 线路未设置安全上限，拒绝进行下一步。
+6. **执行器兼容校验（新增）**：在进入测量前，必须确认 `memory/wiring_map.yaml` 中至少存在一个可解析为浮点数的 `max_safe_voltage`。该字段将被 `tools/qcodes_executor.py` 在 `safe_set_dc_bias(...)` 中动态读取并作为 IV 级安全上限。
 ## 示例输出格式
 ```yaml
 requested_wiring:
